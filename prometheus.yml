@@ -1,0 +1,14 @@
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  - job_name: 'ml_app'
+    # This assumes your ml_app instances will be discoverable, 
+    # for a simple MVP, we'll assume a single instance for now.
+    # In a real scenario, you'd use service discovery.
+    static_configs:
+      - targets: ['ml_app:5000'] # Assuming ml_app service in docker-compose

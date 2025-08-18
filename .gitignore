@@ -1,19 +1,27 @@
-# Python virtual environments
-.venv/
-venv/
-
-.Sillicon
-
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
 *$py.class
 
+# Python virtual environments
+pe/
+
 # Distribution / packaging
+.Python
 build/
 dist/
-*.egg-info/
+downloads/
+eggs/
 .eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
 
 # Installer logs
 pip-log.txt
@@ -22,13 +30,14 @@ pip-delete-this-directory.txt
 # Unit test / coverage reports
 htmlcov/
 .tox/
+.nox/
 .coverage
 .coverage.*
 .cache
+.pytest_cache/
 nosetests.xml
 coverage.xml
 *.cover
-*.py,cover
 
 # Jupyter Notebook checkpoints
 .ipynb_checkpoints
@@ -37,8 +46,23 @@ coverage.xml
 .env
 .env.*
 
+# IDE / Editor settings
+.vscode/
+.idea/
+
 # macOS files
 .DS_Store
 
-# VS Code settings
-.vscode/
+# --- Project Specific ---
+# Log files
+*.log
+logs/
+
+# Generated model files
+models/
+
+# Generated reports
+reports/
+
+RUNBOOK.md 
+error.txt
