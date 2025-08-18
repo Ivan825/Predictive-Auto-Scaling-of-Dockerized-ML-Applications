@@ -1,0 +1,15 @@
+FROM python:3.9-slim-buster
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY src/ ./src
+COPY scripts/scale_decision_engine.py .
+
+# Create a directory for models and data
+RUN mkdir -p /app/models
+RUN mkdir -p /app/data
+
+CMD ["python", "scale_decision_engine.py"]

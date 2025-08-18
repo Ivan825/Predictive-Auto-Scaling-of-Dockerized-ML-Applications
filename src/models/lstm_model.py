@@ -60,7 +60,7 @@ def train_lstm(df, past=60, ahead=15, epochs=10, batch_size=128, lr=1e-3, hidden
             else "cpu"
         )
 
-    series = df["req_per_min"].values.astype("float32")
+    series = df["y"].values.astype("float32")
     X, y = make_windows(series, past=past, ahead=ahead)
     if len(X) < 2:
         raise ValueError("Not enough data to make windows; increase data length or reduce past/ahead.")
@@ -114,7 +114,7 @@ def predict_lstm(model, df, cfg):
     using the most recent `past` points in df.
     """
     device = cfg.get("device", "cpu")
-    series = df["req_per_min"].values.astype("float32")
+    series = df["y"].values.astype("float32")
     past = cfg["past"]; ahead = cfg["ahead"]
 
     if len(series) < past:

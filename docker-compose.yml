@@ -1,0 +1,58 @@
+version: '3.8'
+
+services:
+  ml_app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ml_app_image
+    ports:
+      - "5000:5000"
+    expose:
+      - "5000"
+    networks:
+      - app_network
+    deploy:
+      replicas: 1 # Start with 1 replica, autoscaler will manage this
+      restart_policy:
+        condition: on-failure
+
+  prometheus:
+    image: prom/prometheus:latest
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+    command: --config.file=/etc/prometheus/prometheus.yml
+    ports:
+      - "9090:9090"
+    networks:
+      - app_network
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    networks:
+      - app_network
+    depends_on:
+      - prometheus
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+
+  autoscaler:
+    build:
+      context: .
+      dockerfile: Dockerfile.autoscaler
+    image: autoscaler_image
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock # Mount Docker socket
+      - ./models:/app/models # Mount the entire models directory
+    networks:
+      - app_network
+    depends_on:
+      - ml_app # Ensure ml_app is up before autoscaler starts
+    environment:
+      - DOCKER_HOST=unix:///var/run/docker.sock # Ensure docker-py connects to the mounted socket
+
+networks:
+  app_network:
+    driver: bridge # Use bridge network for local development

@@ -1,5 +1,8 @@
 pandas
-numpy
+scikit-learn
 prophet
-tensorflow
-matplotlib
+torch
+docker
+flask
+prometheus-client
+joblib
