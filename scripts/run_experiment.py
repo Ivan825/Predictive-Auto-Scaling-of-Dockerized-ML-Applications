@@ -18,6 +18,20 @@ from src.simulate_data import simulate_demand
 from src.simulator import simulate
 from src.metrics import mae, rmse, mape, smape, scaling_scores
 
+
+def time_split(df: pd.DataFrame, train_days: int = 7):
+    """
+    Split a continuous 1-min dataframe into train (first N days) and test (rest).
+    Assumes a 'timestamp' column of dtype datetime64[ns].
+    """
+    t0 = df["timestamp"].min()
+    split_time = t0 + pd.Timedelta(days=train_days)
+    df_train = df[df["timestamp"] < split_time].reset_index(drop=True)
+    df_test  = df[df["timestamp"] >= split_time].reset_index(drop=True)
+    if len(df_train) == 0 or len(df_test) == 0:
+        raise ValueError("Split produced empty train or test. Increase total days or adjust train_days.")
+    return df_train, df_test
+
 # Optional imports (Prophet / PyTorch LSTM)
 HAVE_PROPHET = True
 try:
@@ -133,102 +147,121 @@ def plot_policy_bars(scores_map, title, outpath):
 
 # ---------- pipelines ----------
 
-def run_prophet_pipeline(df):
+def run_prophet_pipeline(df, train_days=7):
     """
-    Train Prophet WITH regressors, get in-sample predictions, simulate policies,
-    and produce plots.
+    Train Prophet WITH regressors on the TRAIN window, forecast the TEST window,
+    simulate policies ONLY on TEST, and save plots/CSVs.
     """
     results = []
 
-    print("\n=== [Prophet] Training with regressors… ===")
-    m = train_prophet(df, regressor_cols=["is_event"])
+    # ---- split
+    df_train, df_test = time_split(df, train_days=train_days)
 
-    fc = forecast_prophet(m, df=df, horizon_minutes=0)  # in-sample (regressor-safe)
-    fc = fc.rename(columns={"ds": "timestamp"})
-    df_fc = df.merge(fc, on="timestamp", how="left")
+    print("\n=== [Prophet] Training with regressors (train window)… ===")
+    m = train_prophet(df_train, regressor_cols=["is_event"])
 
-    # Forecast metrics
-    mask = ~df_fc["yhat"].isna()
-    y = df_fc.loc[mask, "req_per_min"].values
-    yhat = df_fc.loc[mask, "yhat"].values
-    print("Prophet forecast metrics:",
+    # Forecast exactly the test horizon, using test regressors (e.g., is_event)
+    horizon_minutes = len(df_test)  # 1-minute frequency
+    fut_regs = df_test[["timestamp", "is_event"]] if "is_event" in df_test.columns else df_test[["timestamp"]]
+    fc_test = forecast_prophet(
+        m,
+        df=df_train,                     # df required for schema; training df
+        horizon_minutes=horizon_minutes, # forecast ahead
+        future_regressors=fut_regs       # supply test regressor values
+    ).rename(columns={"ds": "timestamp"})
+
+    # Keep only the forecast rows that align with test timestamps
+    fc_test = fc_test.iloc[-len(df_test):].reset_index(drop=True)
+    df_fc_test = df_test.merge(fc_test, on="timestamp", how="left")
+
+    # Forecast metrics on TEST window
+    mask = ~df_fc_test["yhat"].isna()
+    y = df_fc_test.loc[mask, "req_per_min"].values
+    yhat = df_fc_test.loc[mask, "yhat"].values
+    print("Prophet TEST forecast metrics:",
           {"MAE": mae(y, yhat), "RMSE": rmse(y, yhat), "MAPE": mape(y, yhat), "SMAPE": smape(y, yhat)})
 
-    # Plot forecast vs demand
-    plot_prophet_forecast(df_fc, ROOT / "reports/prophet_demand_vs_forecast.png")
+    # Plot (test window) demand vs forecast
+    plot_prophet_forecast(df_fc_test, ROOT / "reports/prophet_demand_vs_forecast_TEST.png")
 
-    # Simulate policies
-    sim_map = {}    # policy -> sim_df
-    score_map = {}  # policy -> scores
+    # Simulate policies on TEST only
+    sim_map, score_map = {}, {}
     policies = ["static2", "simple", "buffered", "conf", "policy"]
 
     for policy in policies:
         if policy == "static2":
-            sim_df = static_simulation(df_fc, capacity=25, fixed_containers=2)
+            sim_df = static_simulation(df_fc_test, capacity=25, fixed_containers=2)
         else:
             sim_df = simulate(
-                df=df_fc,
-                forecasts=df_fc[["timestamp", "yhat", "yhat_upper"]],
+                df=df_fc_test,
+                forecasts=df_fc_test[["timestamp", "yhat", "yhat_upper"]],
                 policy_name=policy,
                 capacity=25,
                 init_containers=2
             )
 
         scores = scaling_scores(sim_df)
-        out_path = ROOT / f"reports/sim_prophet_{policy}.csv"
+        out_path = ROOT / f"reports/sim_prophet_TEST_{policy}.csv"
         sim_df.to_csv(out_path, index=False)
-        print(f"[Prophet] {policy}:", scores)
+        print(f"[Prophet|TEST] {policy}:", scores)
 
         sim_map[policy] = sim_df
         score_map[policy] = scores
-        results.append(("prophet", policy, str(out_path), scores))
+        results.append(("prophet_TEST", policy, str(out_path), scores))
 
-    # Plots: containers & latency across policies
+    # Plots: containers & latency across policies (TEST)
     plot_series_by_policy(sim_map, "containers",
-                          "Containers Over Time (Prophet policies)",
+                          "Containers Over Time (Prophet policies, TEST)",
                           "containers",
-                          ROOT / "reports/prophet_containers_over_time.png")
+                          ROOT / "reports/prophet_containers_over_time_TEST.png")
 
     plot_series_by_policy(sim_map, "lat_ms",
-                          "Latency Over Time (Prophet policies)",
+                          "Latency Over Time (Prophet policies, TEST)",
                           "latency (ms)",
-                          ROOT / "reports/prophet_latency_over_time.png")
+                          ROOT / "reports/prophet_latency_over_time_TEST.png")
 
-    # Bar charts
-    plot_policy_bars(score_map, "Policy Comparison (Prophet)", ROOT / "reports/prophet_policy_bars.png")
+    # Bar charts (TEST)
+    plot_policy_bars(score_map, "Policy Comparison (Prophet, TEST)", ROOT / "reports/prophet_policy_bars_TEST.png")
 
     return results
 
 
-def run_lstm_pipeline(df):
+
+def run_lstm_pipeline(df, train_days=7):
     """
-    Train PyTorch LSTM, create rolling per-minute forecasts (avg next horizon),
-    simulate policies, and produce plots.
+    Train LSTM on TRAIN window, generate rolling forecasts across TEST window (using only past),
+    simulate policies ONLY on TEST, and save plots/CSVs.
     """
     results = []
 
-    print("\n=== [LSTM] Training… ===")
-    model, cfg = train_lstm(df, past=60, ahead=15, epochs=5, batch_size=128)
+    # ---- split
+    df_train, df_test = time_split(df, train_days=train_days)
 
-    print("[LSTM] Generating rolling forecasts…")
-    PAST = cfg.get("past", 60)
+    print("\n=== [LSTM] Training (train window)… ===")
+    # You can tweak past/ahead here; keep aligned with your model file defaults
+    model, cfg = train_lstm(df_train, past=60, ahead=15, epochs=5, batch_size=128)
+
+    # Rolling forecasting on TEST: at each t in test, use history up to t (train + test[0..t-1])
+    print("[LSTM] Generating rolling forecasts on TEST…")
+    history = df_train.copy()
     rows = []
-    # start at least after PAST points (predict next-horizon avg)
-    for i in range(PAST, len(df)):
-        sub = df.iloc[:i].copy()
-        yhat = predict_lstm(model, sub, cfg)
-        rows.append({"timestamp": df["timestamp"].iloc[i], "yhat": yhat})
-    lstm_fc = pd.DataFrame(rows)
+    for i in range(len(df_test)):
+        # predict next-horizon avg using current history
+        yhat = predict_lstm(model, history, cfg)
+        rows.append({"timestamp": df_test["timestamp"].iloc[i], "yhat": yhat})
+        # append the actual observed point at time i to history (to simulate real-time arrival)
+        history = pd.concat([history, df_test.iloc[i:i+1]], ignore_index=True)
 
-    # align truth with forecast start
-    df_eval = df.iloc[PAST:].reset_index(drop=True)
-    df_eval = df_eval.merge(lstm_fc, on="timestamp", how="left")
+    lstm_fc_test = pd.DataFrame(rows)
 
-    # Plot LSTM forecast vs demand
-    plot_lstm_forecast(df_eval, ROOT / "reports/lstm_demand_vs_forecast.png")
+    # Align truth with forecast start (it's exactly df_test)
+    df_eval = df_test.merge(lstm_fc_test, on="timestamp", how="left")
 
-    sim_map = {}
-    score_map = {}
+    # Plot LSTM forecast vs demand (TEST)
+    plot_lstm_forecast(df_eval, ROOT / "reports/lstm_demand_vs_forecast_TEST.png")
+
+    # Simulate policies on TEST
+    sim_map, score_map = {}, {}
     policies = ["static2", "simple", "buffered", "policy"]
 
     for policy in policies:
@@ -244,28 +277,29 @@ def run_lstm_pipeline(df):
             )
 
         scores = scaling_scores(sim_df)
-        out_path = ROOT / f"reports/sim_lstm_{policy}.csv"
+        out_path = ROOT / f"reports/sim_lstm_TEST_{policy}.csv"
         sim_df.to_csv(out_path, index=False)
-        print(f"[LSTM] {policy}:", scores)
+        print(f"[LSTM|TEST] {policy}:", scores)
 
         sim_map[policy] = sim_df
         score_map[policy] = scores
-        results.append(("lstm", policy, str(out_path), scores))
+        results.append(("lstm_TEST", policy, str(out_path), scores))
 
-    # Plots for LSTM policies
+    # Plots for LSTM policies (TEST)
     plot_series_by_policy(sim_map, "containers",
-                          "Containers Over Time (LSTM policies)",
+                          "Containers Over Time (LSTM policies, TEST)",
                           "containers",
-                          ROOT / "reports/lstm_containers_over_time.png")
+                          ROOT / "reports/lstm_containers_over_time_TEST.png")
 
     plot_series_by_policy(sim_map, "lat_ms",
-                          "Latency Over Time (LSTM policies)",
+                          "Latency Over Time (LSTM policies, TEST)",
                           "latency (ms)",
-                          ROOT / "reports/lstm_latency_over_time.png")
+                          ROOT / "reports/lstm_latency_over_time_TEST.png")
 
-    plot_policy_bars(score_map, "Policy Comparison (LSTM)", ROOT / "reports/lstm_policy_bars.png")
+    plot_policy_bars(score_map, "Policy Comparison (LSTM, TEST)", ROOT / "reports/lstm_policy_bars_TEST.png")
 
     return results
+
 
 
 def main():
@@ -282,15 +316,17 @@ def main():
         df.to_csv(data_path, index=False)
         print(f"[Data] Saved: {data_path}")
 
-    # 2) Run pipelines
+    # 2) Run pipelines on train/test split
     all_results = []
+    TRAIN_DAYS = 7  # first 7 days train, rest test (adjust if you generated different length)
+
     if HAVE_PROPHET:
-        all_results.extend(run_prophet_pipeline(df))
+        all_results.extend(run_prophet_pipeline(df, train_days=TRAIN_DAYS))
     else:
         print("[SKIP] Prophet pipeline (library unavailable).")
 
     if HAVE_LSTM:
-        all_results.extend(run_lstm_pipeline(df))
+        all_results.extend(run_lstm_pipeline(df, train_days=TRAIN_DAYS))
     else:
         print("[SKIP] LSTM pipeline (library unavailable).")
 
