@@ -64,5 +64,11 @@ models/
 # Generated reports
 reports/
 
-RUNBOOK.md 
+# Data files
+data/
+
+# Other
+RUNBOOK.md
 error.txt
+synthetic data exp log.txt
+notion/

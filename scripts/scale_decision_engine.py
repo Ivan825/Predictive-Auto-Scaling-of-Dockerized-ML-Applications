@@ -12,15 +12,12 @@ from pathlib import Path
 logging.basicConfig(level=logging.INFO,
                     format='%(asctime)s - %(levelname)s - %(message)s')
 
-# --- Add src to path for imports ---
-import sys
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.append(str(ROOT))
+
 
 # --- Import project modules ---
 from src.models.prophet_model import forecast_prophet
 from src.models.lstm_model import predict_lstm, LSTMRegressor # The class definition is needed
-from src.policies import confidence_aware, simple_threshold
+from src.policies import confidence_aware, simple_ceiling
 from src.safety_net import safety_override
 
 # --- Constants ---
@@ -37,7 +34,8 @@ FORECAST_HORIZON_MINUTES = 15
 
 # --- Load Models ---
 logging.info("Loading models...")
-MODELS_DIR = ROOT / "models"
+MODELS_DIR = Path("/app/models")
+logging.info(f"MODELS_DIR resolved to: {MODELS_DIR}")
 prophet_model = joblib.load(MODELS_DIR / 'prophet_model.joblib')
 lstm_model_state = torch.load(MODELS_DIR / 'lstm_model.pt')
 lstm_config = joblib.load(MODELS_DIR / 'lstm_config.joblib')
@@ -163,7 +161,7 @@ def main_loop():
             target_replicas = confidence_aware(predicted_upper, CAPACITY_PER_CONTAINER)
             logging.info(f"Policy '{POLICY}' chose {target_replicas} replicas based on predicted_upper={predicted_upper:.2f}.")
         else: # Default to simple
-            target_replicas = simple_threshold(predicted_load, CAPACITY_PER_CONTAINER)
+            target_replicas = simple_ceiling(predicted_load, CAPACITY_PER_CONTAINER)
             logging.info(f"Policy '{POLICY}' chose {target_replicas} replicas based on predicted_load={predicted_load:.2f}.")
 
         # 4. Apply safety net (optional, for future enhancement)

@@ -1,79 +1,107 @@
 # Predictive Auto-Scaling Project: Runbook & Guide
 
-This document provides a complete guide to understanding, setting up, and running the unified predictive auto-scaling project.
+This document provides a complete guide to understanding, setting up, and running the predictive auto-scaling project.
 
 ---
 
-## Part 1: How to Run Everything (Step-by-Step Guide)
+## 1. Project Structure
 
-This section explains what the system does, why it works, and how to run it.
+Here is a summary of what each file and directory in the project is responsible for.
 
-### The 5 W's and 1 H: Understanding the System
+-   `docker-compose.yml`: The main orchestration file. It defines and configures all the services (containers) of the application: `ml_app`, `prometheus`, `grafana`, and the `autoscaler`. It's the entry point for running the live system.
+-   `Dockerfile`, `Dockerfile.autoscaler`, `Dockerfile.ml_app`: These files contain the instructions to build the Docker images for the different components of the system.
+-   `prometheus.yml`: The configuration file for the Prometheus monitoring service. It tells Prometheus which targets to scrape for metrics (in this case, the `ml_app` service).
+-   `requirements.txt`: A list of all the Python packages required to run the project's scripts.
+-   `data/`: This directory holds the synthetic workload data (`.csv` files) used for training the forecasting models and for running offline simulations.
+-   `models/`: This directory stores the trained and serialized machine learning models (e.g., `prophet_model.joblib`, `lstm_model.pt`) that are used by the live autoscaler and the simulation script.
+-   `reports/`: This is the output directory for the offline simulation. When you run `run_experiment.py`, it will populate this folder with `.csv` summaries and `.png` plots that compare the performance of different scaling strategies.
+-   `scripts/`: Contains high-level executable scripts.
+    -   `train_models.py`: This script reads data from `data/`, trains the Prophet and LSTM forecasting models, and saves the trained artifacts into the `models/` directory. **This is the first script you need to run.**
+    -   `scale_decision_engine.py`: This is the brain of the live auto-scaling system. It runs in a continuous loop within the `autoscaler` container, queries Prometheus for metrics, uses a trained model to predict future load, and executes scaling commands via the Docker API.
+    -   `run_experiment.py`: An offline simulation and evaluation tool. It uses historical data to test how different scaling policies would have performed, allowing you to analyze and compare them without running the full live system. It generates files in the `reports/` directory.
+-   `src/`: Contains the core Python source code.
+    -   `ml_app.py`: A simple Flask web application that simulates an ML inference service. It exposes an endpoint for predictions and, crucially, exposes metrics for Prometheus to scrape.
+    -   `policies.py`: A key module that implements the various scaling logic strategies (e.g., `simple_ceiling`, `buffered`, `confidence_aware`). The decision engine uses these functions to translate a load forecast into a required number of containers.
+    -   `simulator.py`: The core simulation engine that is used by `run_experiment.py` to model how the system behaves under different conditions.
+    -   `models/`: This sub-directory contains the Python code that defines the model architectures and training/prediction functions (e.g., for the LSTM model).
+    -   `safety_net.py`: Implements logic for a reactive safety mechanism. This can override a predictive decision if real-time metrics (like latency or CPU) exceed critical thresholds.
+    -   `simulate_data.py`: A utility script to generate the synthetic `.csv` workload patterns found in the `data/` directory.
 
-*   **WHAT is this?**
-    *   This is a predictive auto-scaling system for a Dockerized machine learning application. It automatically adjusts the number of running application containers based on *predicted* future demand, not just current demand.
+---
 
-*   **WHO is this for?**
-    *   This system is for developers and operators running services (especially ML services) that experience variable demand and need to scale efficiently to maintain performance and control costs.
+## 2. How to Run the System
 
-*   **WHEN does it operate?**
-    *   The system runs continuously. The auto-scaler component checks for new metrics, runs a forecast, and makes a scaling decision every 60 seconds (by default).
+Follow these steps to get the project running.
 
-*   **WHERE does it run?**
-    *   The entire system is designed to run locally on your machine using Docker and Docker Compose. Each component (the ML app, Prometheus, the auto-scaler) runs in its own container.
+### Prerequisites
 
-*   **WHY is this approach useful?**
-    *   **Proactive vs. Reactive:** Traditional auto-scaling is *reactive*—it scales up only after load has already increased, which can lead to slow response times for users. This system is *proactive*. It forecasts demand minutes into the future and scales up *before* the load arrives, ensuring low latency and a better user experience.
-    *   **Efficiency:** By scaling down during predicted lulls, it prevents over-provisioning and saves computational resources and costs.
-    *   **Intelligence:** It uses sophisticated forecasting models (like Prophet and LSTM) and scaling policies that can account for trends, seasonality, and uncertainty, making it much smarter than simple threshold-based scaling.
+-   **Docker and Docker Desktop:** Must be installed and running on your system.
+-   **Python 3.8+:** Required to run the training and simulation scripts.
 
-*   **HOW does it work?**
-    1.  **Metrics Collection:** The `ml_app` (a Flask application) exposes performance metrics. A `Prometheus` container is configured to scrape and store these metrics, primarily the incoming request rate.
-    2.  **Forecasting:** The `autoscaler` container runs the main `scale_decision_engine.py` script. In a loop, it queries the Prometheus database for the latest historical demand data.
-    3.  **Prediction:** It feeds this historical data into a pre-trained forecasting model (e.g., `prophet_model.joblib`) to predict the demand for the next 15 minutes.
-    4.  **Policy Decision:** The predicted demand (including the confidence interval, `yhat_upper`) is passed to a scaling policy function (e.g., `confidence_aware`). This policy calculates the optimal number of containers needed to handle the predicted load, adding a buffer for safety.
-    5.  **Safety Check:** An optional safety net can verify the decision against operational constraints (e.g., maximum latency) to prevent risky scaling actions.
-    6.  **Scaling Action:** The engine communicates with the Docker daemon on your host machine to command Docker Compose to scale the `ml_app` service up or down to the target number of replicas.
+### Option 1: Run the Live Auto-Scaling System
 
-### How to Make It Happen: Execution Steps
+This will launch the complete system with the autoscaler actively managing the number of ML application containers.
 
-Here is the sequence of commands to get the entire system running from scratch.
+**Step 1: Install Python Dependencies**
 
-**Prerequisites:**
-*   Docker Desktop is installed and running.
-*   Python 3.8+ is installed.
-
-**Step 1: Install Dependencies**
-
-Install all the necessary Python packages using the new unified `requirements.txt` file.
+Open your terminal and install all the required packages from `requirements.txt`.
 
 ```bash
 pip install -r requirements.txt
 ```
 
-**Step 2: Train and Save the Forecasting Models**
+**Step 2: Train the Predictive Models**
 
-The live auto-scaler needs models to make predictions. Run the new training script. This will generate the `prophet_model.joblib` and `lstm_model.pt` files and save them in a new `/models` directory.
+Before the autoscaler can run, it needs the trained models. Execute the training script:
 
 ```bash
-# Run the training script from the project root directory:
 python scripts/train_models.py
 ```
 
-**Step 3: Launch the Full System**
+-   **Expected Output:** You will see console messages indicating that the Prophet and LSTM models are being trained. After a few moments, it will confirm that the models have been saved to the `models/` directory.
 
-With the models trained and all files in place, you can now launch the entire stack using Docker Compose. This single command will build the necessary Docker images and start all the services defined in `docker-compose.yml`.
+**Step 3: Launch the Entire System with Docker Compose**
+
+Now, start all the services. This command will build the necessary Docker images and start the containers in the correct order.
 
 ```bash
-# Make sure Docker Desktop is running, then execute:
 docker-compose up --build
 ```
 
-**What will happen:**
-*   Docker will build three images: one for your `ml_app`, one for the `autoscaler`, and one for `prometheus`.
-*   It will start one container for Prometheus.
-*   It will start one container for the `autoscaler`.
-*   It will start with an initial number of `ml_app` containers (e.g., 1).
-*   You will see logs from all containers in your terminal. Watch the `autoscaler` logs to see it making decisions and scaling the `ml_app` up and down.
+-   **What to Expect:**
+    1.  Four services will be started: `ml_app`, `prometheus`, `grafana`, and `autoscaler`.
+    2.  Your terminal will show a combined log output from all containers.
+    3.  **To see the autoscaler in action**, watch for logs from the `autoscaler` service. You will see messages every 60 seconds like:
+        -   `Querying Prometheus for metrics...`
+        -   `Generating forecast with Prophet...`
+        -   `Policy 'confidence_aware' chose X replicas...`
+        -   `Scaling ml_app from Y to X replicas...`
+    4.  You can access the supporting services in your web browser:
+        -   **Prometheus:** `http://localhost:9090` (You can see the `ml_app` target and run queries).
+        -   **Grafana:** `http://localhost:3000` (Login with `admin`/`admin`. You can configure it to use Prometheus as a data source).
 
-You now have a fully operational, predictive auto-scaling system running on your machine!
+To stop the system, press `Ctrl+C` in your terminal.
+
+### Option 2: Run an Offline Simulation and Evaluation
+
+If you only want to analyze and compare the performance of the different scaling policies without running the live system, use the experiment script.
+
+**Step 1: Install Dependencies and Train Models**
+
+Follow steps 1 and 2 from the "Live System" instructions above.
+
+**Step 2: Run the Experiment Script**
+
+Execute the simulation script:
+
+```bash
+python scripts/run_experiment.py
+```
+
+-   **What to Expect:**
+    1.  The script will load a dataset from `data/`.
+    2.  It will run simulations for both Prophet and LSTM models against multiple scaling policies (`static`, `simple`, `buffered`, `conf`, etc.).
+    3.  The console will print out detailed performance metrics for each policy, including cost, under-provisioning events, and over-provisioning percentage.
+    4.  Check the **`reports/`** directory. It will now contain:
+        -   `metrics_summary.csv`: A CSV file with the final scores for all policies.
+        -   Multiple `.png` image files visualizing the results, such as `prophet_containers_over_time.png` and `lstm_policy_bars.png`. These plots are excellent for understanding the trade-offs between different strategies.

@@ -1,15 +1,23 @@
-FROM python:3.9-slim-buster
+FROM python:3.9-slim-bullseye
 
 WORKDIR /app
 
+# Install OS-level dependencies needed for Prophet
+RUN apt-get update && apt-get install -y build-essential
+
 COPY requirements.txt .
+
+# Now install the rest of the requirements from the file.
+# The --no-cache-dir flag is good practice for keeping image sizes down.
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Copy source code and scripts
 COPY src/ ./src
 COPY scripts/scale_decision_engine.py .
 
-# Create a directory for models and data
-RUN mkdir -p /app/models
+# Copy the trained models directly into the image
+COPY models/ /app/models/
 RUN mkdir -p /app/data
 
+# Command to run the autoscaler engine
 CMD ["python", "scale_decision_engine.py"]

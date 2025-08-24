@@ -6,3 +6,5 @@ docker
 flask
 prometheus-client
 joblib
+plotly
+kaleido

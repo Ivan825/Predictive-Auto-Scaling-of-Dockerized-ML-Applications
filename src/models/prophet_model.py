@@ -39,10 +39,10 @@ def train_prophet(
 
 def forecast_prophet(
     model: Prophet,
-    df: pd.DataFrame,
+    df: Optional[pd.DataFrame] = None,
     horizon_minutes: int = 0,
     freq: str = "min",
-    future_regressors: Optional[pd.DataFrame] = None,
+    future_df: Optional[pd.DataFrame] = None,
 ) -> pd.DataFrame:
     """
     Make predictions with a model that may have regressors.
@@ -54,10 +54,9 @@ def forecast_prophet(
          Must have ["timestamp", "req_per_min", ...regressors] columns.
     horizon_minutes : 0 => in-sample prediction on df; >0 => future forecast
     freq : pandas offset alias for step (e.g., "min")
-    future_regressors : optional DataFrame providing regressor values for the
-                        future horizon. Must include a datetime column named "timestamp"
-                        (or "ds") plus the required regressor columns. If omitted,
-                        we will fill required future regressors with 0.
+    future_df : optional DataFrame providing future dates and regressor values. 
+                If provided, `horizon_minutes` and `df` are ignored for creating future dates.
+                Must include a datetime column named "timestamp" or "ds".
 
     Returns
     -------
@@ -66,40 +65,31 @@ def forecast_prophet(
     # Determine which regressors the model expects
     regressor_cols = list(getattr(model, "extra_regressors", {}).keys())
 
-    if horizon_minutes == 0:
-        # In-sample: pass the same regressors used in training
-        pdf = df.rename(columns={"timestamp": "ds", "req_per_min": "y"}).copy()
-        # Ensure required regressors are present (Prophet will error if missing)
-        for col in regressor_cols:
-            if col not in pdf.columns:
-                # If a regressor was added at training time, it MUST be present here.
-                # Default to 0 if you truly want no effect for those rows.
-                pdf[col] = 0
-        fc = model.predict(pdf)
-        return fc[["ds", "yhat", "yhat_lower", "yhat_upper"]]
+    if future_df is not None:
+        future = future_df.copy()
+        if "ds" not in future.columns and "timestamp" in future.columns:
+            future = future.rename(columns={"timestamp": "ds"})
+    elif horizon_minutes > 0:
+        future = model.make_future_dataframe(periods=horizon_minutes, freq=freq)
+    else: # In-sample
+        if df is None:
+            raise ValueError("df must be provided for in-sample forecasting")
+        future = df.rename(columns={"timestamp": "ds", "req_per_min": "y"}).copy()
 
-    # Future forecast
-    future = model.make_future_dataframe(periods=horizon_minutes, freq=freq)
-
+    # Ensure regressors are present and populated
     if regressor_cols:
-        # Prepare a future regressor frame aligned on "ds"
-        if future_regressors is not None:
-            fr = future_regressors.copy()
-            # Normalize column names
-            if "ds" not in fr.columns and "timestamp" in fr.columns:
-                fr = fr.rename(columns={"timestamp": "ds"})
-            # Keep only needed columns
-            keep = ["ds"] + [c for c in regressor_cols if c in fr.columns]
-            fr = fr[keep].copy()
-        else:
-            # No values provided: default all future regressor values to 0
-            fr = pd.DataFrame({"ds": future["ds"]})
-            for col in regressor_cols:
-                fr[col] = 0
+        # If a dataframe was passed for context, use it to populate regressors
+        source_df = df if df is not None else pd.DataFrame()
+        if "ds" not in source_df.columns and "timestamp" in source_df.columns:
+            source_df = source_df.rename(columns={"timestamp": "ds"})
 
-        # Merge regressors into the future frame
-        future = future.merge(fr, on="ds", how="left")
-        # If any required regressor missing post-merge, fill with 0
+        # Merge source data to fill known regressor values
+        if not source_df.empty:
+             # Keep only needed columns from source
+            keep_cols = ["ds"] + [c for c in regressor_cols if c in source_df.columns]
+            future = future.merge(source_df[keep_cols], on="ds", how="left")
+
+        # Fill any remaining missing regressor values with 0
         for col in regressor_cols:
             if col not in future.columns:
                 future[col] = 0

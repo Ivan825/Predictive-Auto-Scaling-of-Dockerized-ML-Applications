@@ -31,14 +31,16 @@ class SeqDS(Dataset):
 
 # ---------- model ----------
 
-class LSTMRegressor(nn.Module):
-    def __init__(self, input_size=1, hidden=64):
+class LSTM(nn.Module):
+    def __init__(self, input_dim=1, hidden_dim=64, layer_dim=1, output_dim=1):
         super().__init__()
-        self.lstm = nn.LSTM(input_size=input_size, hidden_size=hidden, batch_first=True)
+        self.hidden_dim = hidden_dim
+        self.layer_dim = layer_dim
+        self.lstm = nn.LSTM(input_dim, hidden_dim, layer_dim, batch_first=True)
         self.head = nn.Sequential(
-            nn.Linear(hidden, 32),
+            nn.Linear(hidden_dim, 32),
             nn.ReLU(),
-            nn.Linear(32, 1)
+            nn.Linear(32, output_dim)
         )
     def forward(self, x):
         # x: (B, past, 1)
@@ -74,7 +76,7 @@ def train_lstm(df, past=60, ahead=15, epochs=10, batch_size=128, lr=1e-3, hidden
     dl_tr = DataLoader(ds_tr, batch_size=batch_size, shuffle=True)
     dl_val = DataLoader(ds_val, batch_size=batch_size, shuffle=False)
 
-    model = LSTMRegressor(input_size=1, hidden=hidden).to(device)
+    model = LSTM(input_dim=1, hidden_dim=hidden, layer_dim=1, output_dim=1).to(device)
     opt = torch.optim.Adam(model.parameters(), lr=lr)
     loss_fn = nn.MSELoss()
 
@@ -105,7 +107,10 @@ def train_lstm(df, past=60, ahead=15, epochs=10, batch_size=128, lr=1e-3, hidden
         # Uncomment for logs:
         # print(f"epoch {epoch+1}/{epochs}  train_mse={tr_loss:.4f}  val_mse={val_loss:.4f}")
 
-    cfg = {"past": past, "ahead": ahead, "device": device}
+    cfg = {
+        "past": past, "ahead": ahead, "device": device, 
+        "input_dim": 1, "hidden_dim": hidden, "layer_dim": 1, "output_dim": 1
+    }
     return model, cfg
 
 def predict_lstm(model, df, cfg):
