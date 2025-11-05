@@ -1,0 +1,10 @@
+model,policy,log_path,over_%,under_events,avg_latency_ms,p95_latency_ms,avg_cpu_%,switches,cost_index
+prophet_TEST,static2,/Users/nikunjmahajan/Desktop/pe/proj/reports/sim_prophet_TEST_static2.csv,99.97624269005848,21,40.009047633414944,40.0,11.094806286549707,1,218880
+prophet_TEST,simple,/Users/nikunjmahajan/Desktop/pe/proj/reports/sim_prophet_TEST_simple.csv,99.91776315789474,43,40.014387435656296,40.0,10.552899610136452,100,141183
+prophet_TEST,buffered,/Users/nikunjmahajan/Desktop/pe/proj/reports/sim_prophet_TEST_buffered.csv,99.93512426900585,35,40.01054117231741,40.0,9.781952972709552,90,154314
+prophet_TEST,conf,/Users/nikunjmahajan/Desktop/pe/proj/reports/sim_prophet_TEST_conf.csv,100.0,0,40.0,40.0,0.6563629104011469,6324,13009346
+prophet_TEST,policy,/Users/nikunjmahajan/Desktop/pe/proj/reports/sim_prophet_TEST_policy.csv,99.92050438596492,40,40.009047633414944,40.0,11.094806286549707,2112,131428
+lstm_TEST,static2,/Users/nikunjmahajan/Desktop/pe/proj/reports/sim_lstm_TEST_static2.csv,99.97624269005848,21,40.009029809391144,40.0,12.637473196881093,1,218880
+lstm_TEST,simple,/Users/nikunjmahajan/Desktop/pe/proj/reports/sim_lstm_TEST_simple.csv,99.8702485380117,68,40.022731926284564,40.0,12.699119152046784,73,109504
+lstm_TEST,buffered,/Users/nikunjmahajan/Desktop/pe/proj/reports/sim_lstm_TEST_buffered.csv,99.8702485380117,68,40.022731926284564,40.0,12.699119152046784,73,109504
+lstm_TEST,policy,/Users/nikunjmahajan/Desktop/pe/proj/reports/sim_lstm_TEST_policy.csv,99.89948830409357,51,40.009029809391144,40.0,12.637473196881093,77,109991

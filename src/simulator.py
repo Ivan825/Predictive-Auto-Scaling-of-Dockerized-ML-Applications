@@ -76,3 +76,5 @@ def simulate(df, forecasts, policy_name, capacity=25, init_containers=2,
             "policy": policy_name
         })
     return pd.DataFrame(logs)
+
+
