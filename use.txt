@@ -1,0 +1,306 @@
+Concrete, publishable settings I recommend
+Recommended defaults for final experiments (paper-ready)
+
+initial_days = 90 to 180 (3–6 months) — good balance: captures intraday/weekly patterns and some regime variation.
+
+period_days = 30 (monthly retrain) — retrains monthly, gives ~one fold per month of dataset coverage.
+
+horizon_minutes = 60 (1 hour) — typical for autoscaling decisions (adjust if your spin-up is longer/shorter).
+
+downsample = None (use full 1T for final runs).
+
+max_folds = omit (or set very large) — let folds continue until dataset end.
+
+Why: with initial=90 and period=30 you get ~one fold per month after initial training, so over 13 years you’ll have hundreds of folds that reveal long-term behavior, yet each fold trains on a significant history (3 months+) that reduces overfitting to very short-term noise.
+
+
+Faster / compute-friendly (for experiments)
+
+initial_days = 30
+
+period_days = 7 or 14
+
+downsample = '5T' or '15T'
+
+max_folds = 50
+
+Use this to pick hyperparameters and policies quickly, then re-run best config at 1T for final numbers.
+
+
+
+
+
+
+
+
+Suggested experimental plan (practical)
+
+Tune with downsampled data:
+
+python src/run_experiment_wfv.py --build_load --csv_path data/kaggle_intraday/intraday_spy_1min.csv \
+  --run_prophet_wfv --run_lstm_wfv \
+  --initial_days 30 --period_days 7 --horizon_minutes 60 --max_folds 50 --downsample '15T'
+
+
+Pick best hyperparams / policy from tuning.: python src/tune_lstm_optuna.py
+
+Sanity-check the chosen config on 1T for a smaller time slice (e.g., 3 months):
+
+# set initial_days & period to cover only a chosen slice; omit downsample
+python src/run_experiment_wfv.py --build_load --csv_path ... --run_prophet_wfv --run_lstm_wfv \
+  --initial_days 90 --period_days 30 --horizon_minutes 60 --max_folds 10
+
+
+Final run (paper): full 1T, larger initial, monthly period:
+
+python src/run_experiment_wfv.py --build_load --csv_path ... --run_prophet_wfv --run_lstm_wfv \
+  --initial_days 90 --period_days 30 --horizon_minutes 60
+
+
+(omit --max_folds so it runs until dataset end)
+
+
+
+
+
+for readme:
+
+# 5️⃣ Install required packages
+pip install --upgrade pip
+pip install pandas numpy matplotlib scikit-learn prophet tensorflow keras cmdstanpy plotly
+🧩 B. Data preprocessing (convert raw CSV → load_series.csv)
+bash
+Copy code
+# 1️⃣ Download & unzip the dataset on your local machine (done)
+# 2️⃣ Copy it to server
+scp /Users/ivanbhargava/Desktop/intraday_spy_1min.csv ivan@172.16.192.15:~/docker_ml_scaling/data/kaggle_intraday/
+
+# 3️⃣ Activate venv on server
+source .venv/bin/activate
+
+# 4️⃣ Run preprocessing
+python src/data_loader_kaggle.py \
+  --csv_path data/kaggle_intraday/intraday_spy_1min.csv \
+  --out_csv data/load_series.csv
+Output:
+✅ data/load_series.csv (cleaned, time-indexed load series)
+
+🧩 C. Full training + simulation run (both Prophet & LSTM)
+Use this when you want to retrain everything on real data from scratch:
+
+bash
+Copy code
+python src/run_experiment_wfv.py \
+  --build_load \
+  --csv_path data/kaggle_intraday/intraday_spy_1min.csv \
+  --run_prophet_wfv \
+  --run_lstm_wfv \
+  --initial_days 14 \
+  --period_days 7 \
+  --horizon_minutes 60 \
+  --max_folds 20 \
+  --downsample '5T'
+This command does:
+
+Builds the processed load file (if missing).
+
+Trains Prophet (20 folds).
+
+Trains LSTM (20 folds).
+
+Auto-runs the simulator → writes:
+
+results/sim_reactive_prophet.csv
+
+results/sim_buffered_prophet.csv
+
+results/sim_reactive_lstm.csv
+
+results/sim_buffered_lstm.csv
+
+Runtime: ≈ 15–60 min (CPU) with 5T downsample.
+
+🧩 D. Run only the simulator after models are trained
+🟦 Prophet simulation only
+bash
+Copy code
+python src/run_experiment_wfv.py \
+  --csv_path data/kaggle_intraday/intraday_spy_1min.csv \
+  --output_csv data/load_series.csv \
+  --prophet_model_path results/prophet_wfv/prophet_model_fold_20.pkl \
+  --horizon_minutes 60 \
+  --desired_avg_containers 5 \
+  --buffer_size 1
+🟩 LSTM simulation only
+bash
+Copy code
+python src/run_experiment_wfv.py \
+  --csv_path data/kaggle_intraday/intraday_spy_1min.csv \
+  --output_csv data/load_series.csv \
+  --lstm_model_path results/lstm_wfv/lstm_model_fold_20.h5 \
+  --lstm_scaler_path results/lstm_wfv/lstm_scaler_fold_20.pkl \
+  --horizon_minutes 60 \
+  --desired_avg_containers 5 \
+  --buffer_size 1
+🟧 Both models simultaneously (if you used the dual-simulation patch)
+bash
+Copy code
+python src/run_experiment_wfv.py \
+  --csv_path data/kaggle_intraday/intraday_spy_1min.csv \
+  --output_csv data/load_series.csv \
+  --prophet_model_path results/prophet_wfv/prophet_model_fold_20.pkl \
+  --lstm_model_path results/lstm_wfv/lstm_model_fold_20.h5 \
+  --lstm_scaler_path results/lstm_wfv/lstm_scaler_fold_20.pkl \
+  --horizon_minutes 60 \
+  --desired_avg_containers 5 \
+  --buffer_size 1
+Output:
+✅ Creates or updates simulation CSVs inside results/.
+
+🧩 E. Inspect simulation outputs (optional quick checks)
+bash
+Copy code
+ls -lh results/sim_*.csv
+head -n 10 results/sim_reactive_prophet.csv
+head -n 10 results/sim_buffered_prophet.csv
+head -n 10 results/sim_reactive_lstm.csv
+head -n 10 results/sim_buffered_lstm.csv
+Optional summary:
+
+bash
+Copy code
+python - <<'PY'
+import pandas as pd
+for name in ["sim_reactive_prophet","sim_buffered_prophet","sim_reactive_lstm","sim_buffered_lstm"]:
+    df = pd.read_csv(f"results/{name}.csv")
+    print(name, "mean containers:", df['containers'].mean(), 
+          "under_prov:", df['under_provision'].mean(),
+          "over_prov:", df['over_provision'].mean())
+PY
+🧩 F. Generate plots (Matplotlib comparisons)
+bash
+Copy code
+python src/plot_results_matplotlib.py
+Produces:
+
+bash
+Copy code
+results/forecast_accuracy_mape.png
+results/forecast_accuracy_rmse.png
+results/scaling_behavior_prophet_vs_lstm.png
+results/policy_efficiency_prophet_vs_lstm.png
+🧩 G. View or copy plots locally
+If using VS Code Remote-SSH
+Open the results/ folder in VS Code → click the PNG files.
+
+If you want to copy to local laptop
+bash
+Copy code
+scp ivan@172.16.192.15:~/docker_ml_scaling/results/*.png /Users/ivanbhargava/Desktop/
+🧩 H. (Optional) Clean or rerun experiments
+bash
+Copy code
+# Delete only simulation outputs
+rm results/sim_*.csv
+
+# Delete everything (be careful)
+rm -rf results/*
+
+# Re-run full experiment or only simulator as needed
+
+
+
+
+
+--------->>>>>
+
+for final run:
+
+python src/run_experiment_wfv.py \
+  --build_load \
+  --csv_path data/kaggle_intraday/intraday_spy_1min.csv \
+  --run_prophet_wfv \
+  --run_lstm_wfv \
+  --initial_days 14 \
+  --period_days 7 \
+  --horizon_minutes 60 \
+  --window WINDOW \
+  --epochs 10 \
+  --batch BATCH \
+  --lstm_units LSTM_UNITS \
+  --lstm_dropout LSTM_DROPOUT \
+  --learning_rate LEARNING_RATE \
+  --num_layers 1 \
+  --downsample 10T \
+  --desired_avg_containers 5 \
+  --buffer_size 1
+
+
+
+  found best hyperparameters by tuning:
+
+  for LSTM:
+
+
+  for prophet:
+
+  
+
+
+
+  train final LSTM:
+
+  1.
+
+  python src/wfv_lstm.py \
+  --load_csv data/load_series.csv \
+  --results_dir results/lstm_final_wfv \
+  --initial_days 14 \
+  --period_days 7 \
+  --horizon_minutes 60 \
+  --window 120 \
+  --epochs 10 \
+  --batch 64 \
+  --lstm_units 32 \
+  --lstm_dropout 0.2851072572438218 \
+  --learning_rate 0.0008411945231795324 \
+  --num_layers 1 \
+  --downsample 10T
+
+  2.
+
+  python - <<'PY'
+from pathlib import Path
+import pandas as pd
+from lstm_model import train_lstm_on_fold
+p=Path("results/lstm_final_single")
+p.mkdir(parents=True, exist_ok=True)
+df = pd.read_csv("data/load_series.csv", parse_dates=["datetime"]).set_index("datetime")
+train_series = df['load']
+train_lstm_on_fold(
+    train_series=train_series,
+    model_path=str(p/"lstm_model_final.keras"),
+    scaler_path=str(p/"lstm_scaler_final.pkl"),
+    window=120,
+    epochs=10,
+    batch_size=64,
+    units=32,
+    dropout=0.2851072572438218,
+    learning_rate=0.0008411945231795324
+)
+print("Saved final model and scaler to", p)
+PY
+
+
+3.
+
+python src/run_experiment_wfv.py \
+  --csv_path data/load_series.csv \
+  --lstm_model_path results/lstm_final_single/lstm_model_final.keras \
+  --lstm_scaler_path results/lstm_final_single/lstm_scaler_final.pkl \
+  --horizon_minutes 60 \
+  --out_dir results/lstm_final_single/simulator_out \
+  --downsample 10T
+
+--> edit if simulator flags differ
+
