@@ -1,4 +1,5 @@
-Concrete, publishable settings I recommend
+https://www.kaggle.com/datasets/gratefuldata/intraday-stock-data-1-min-sp-500-200821?resource=download
+
 Recommended defaults for final experiments (paper-ready)
 
 initial_days = 90 to 180 (3–6 months) — good balance: captures intraday/weekly patterns and some regime variation.
