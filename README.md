@@ -1,107 +1,124 @@
-# Predictive Auto-Scaling Project: Runbook & Guide
+# Predictive Auto-Scaling of Dockerized ML Applications
 
-This document provides a complete guide to understanding, setting up, and running the predictive auto-scaling project.
+This project implements a proof-of-concept framework for predictive auto-scaling in containerized environments. By combining **Facebook Prophet** (for seasonality-aware forecasting) and **Long Short-Term Memory (LSTM)** networks (for sequential pattern recognition), the system anticipates workload demand before it spikes.
 
----
-
-## 1. Project Structure
-
-Here is a summary of what each file and directory in the project is responsible for.
-
--   `docker-compose.yml`: The main orchestration file. It defines and configures all the services (containers) of the application: `ml_app`, `prometheus`, `grafana`, and the `autoscaler`. It's the entry point for running the live system.
--   `Dockerfile`, `Dockerfile.autoscaler`, `Dockerfile.ml_app`: These files contain the instructions to build the Docker images for the different components of the system.
--   `prometheus.yml`: The configuration file for the Prometheus monitoring service. It tells Prometheus which targets to scrape for metrics (in this case, the `ml_app` service).
--   `requirements.txt`: A list of all the Python packages required to run the project's scripts.
--   `data/`: This directory holds the synthetic workload data (`.csv` files) used for training the forecasting models and for running offline simulations.
--   `models/`: This directory stores the trained and serialized machine learning models (e.g., `prophet_model.joblib`, `lstm_model.pt`) that are used by the live autoscaler and the simulation script.
--   `reports/`: This is the output directory for the offline simulation. When you run `run_experiment.py`, it will populate this folder with `.csv` summaries and `.png` plots that compare the performance of different scaling strategies.
--   `scripts/`: Contains high-level executable scripts.
-    -   `train_models.py`: This script reads data from `data/`, trains the Prophet and LSTM forecasting models, and saves the trained artifacts into the `models/` directory. **This is the first script you need to run.**
-    -   `scale_decision_engine.py`: This is the brain of the live auto-scaling system. It runs in a continuous loop within the `autoscaler` container, queries Prometheus for metrics, uses a trained model to predict future load, and executes scaling commands via the Docker API.
-    -   `run_experiment.py`: An offline simulation and evaluation tool. It uses historical data to test how different scaling policies would have performed, allowing you to analyze and compare them without running the full live system. It generates files in the `reports/` directory.
--   `src/`: Contains the core Python source code.
-    -   `ml_app.py`: A simple Flask web application that simulates an ML inference service. It exposes an endpoint for predictions and, crucially, exposes metrics for Prometheus to scrape.
-    -   `policies.py`: A key module that implements the various scaling logic strategies (e.g., `simple_ceiling`, `buffered`, `confidence_aware`). The decision engine uses these functions to translate a load forecast into a required number of containers.
-    -   `simulator.py`: The core simulation engine that is used by `run_experiment.py` to model how the system behaves under different conditions.
-    -   `models/`: This sub-directory contains the Python code that defines the model architectures and training/prediction functions (e.g., for the LSTM model).
-    -   `safety_net.py`: Implements logic for a reactive safety mechanism. This can override a predictive decision if real-time metrics (like latency or CPU) exceed critical thresholds.
-    -   `simulate_data.py`: A utility script to generate the synthetic `.csv` workload patterns found in the `data/` directory.
+The framework simulates a Docker-based machine learning environment to evaluate various scaling policies—ranging from simple reactive rules to advanced confidence-aware predictive strategies.
 
 ---
 
-## 2. How to Run the System
+## Project Structure
 
-Follow these steps to get the project running.
+```text
+.
+├── data/                   # Synthetic workload data (generated during runtime)
+├── reports/                # Output plots and simulation metrics
+├── scripts/
+│   └── run_experiment.py   # Main entry point to run the full simulation
+├── src/
+│   ├── models/             # Prophet and LSTM model definitions
+│   ├── policies.py         # Auto-scaling logic (Static, Buffered, Confidence-Aware)
+│   ├── simulator.py        # Core event loop simulating minute-by-minute traffic
+│   ├── metrics.py          # SLA violation and cost calculations
+│   └── simulate_data.py    # Generator for synthetic workload traces
+├── requirements.txt        # Python dependencies
+└── README.md
+```
 
-### Prerequisites
+## Simulation Workflow
 
--   **Docker and Docker Desktop:** Must be installed and running on your system.
--   **Python 3.8+:** Required to run the training and simulation scripts.
+The experiment runs through four distinct stages automatically:
 
-### Option 1: Run the Live Auto-Scaling System
+1.  **Synthetic Data Generation**: Creates a 14-day workload trace featuring daily seasonality, random noise, and bursty "event" spikes (e.g., marketing promotions).
 
-This will launch the complete system with the autoscaler actively managing the number of ML application containers.
+2.  **Model Training**:
+    *   **Prophet**: Fits a decomposable time-series model handling trend and seasonality.
+    *   **LSTM**: Trains a neural network on sliding windows of historical demand.
 
-**Step 1: Install Python Dependencies**
+3.  **Policy Simulation**: Replays the test data minute-by-minute. The autoscaler decides the number of containers based on the forecast and the chosen policy (e.g., Buffered, Simple Ceiling).
 
-Open your terminal and install all the required packages from `requirements.txt`.
+4.  **Evaluation**: Calculates key metrics:
+    *   **SLA Violations**: (Under-provisioning events)
+    *   **Cost Index**: (Total container-uptime minutes)
+    *   **Stability**: (Number of scaling switches)
 
-```bash
+---
+
+## Installation & Setup
+
+### 1. Prerequisites
+
+*   Python 3.8+ (Python 3.11 recommended)
+*   Git
+
+### 2. Clone the Repository
+
+```sh
+git clone <YOUR_REPO_URL>
+cd predictive-auto-scaling-of-dockerized-ml-applications
+```
+
+### 3. Environment Setup
+
+**macOS / Linux**
+
+```sh
+# Create a virtual environment
+python3 -m venv .venv
+
+# Activate the environment
+source .venv/bin/activate
+
+# Upgrade pip
+pip install --upgrade pip
+```
+
+**Windows**
+
+```powershell
+# Create a virtual environment
+python -m venv .venv
+
+# Activate the environment
+# If using Command Prompt (cmd.exe):
+.venv\Scripts\activate.bat
+# If using PowerShell:
+.venv\Scripts\Activate.ps1
+```
+
+### 4. Install Dependencies
+
+```sh
 pip install -r requirements.txt
 ```
+> **Note for Apple Silicon (M1/M2/M3) Users**: If you encounter issues installing PyTorch, use the platform-specific command: `pip install "torch>=2.2,<2.4" torchvision torchaudio`
 
-**Step 2: Train the Predictive Models**
+---
 
-Before the autoscaler can run, it needs the trained models. Execute the training script:
+## Usage
 
-```bash
-python scripts/train_models.py
+To run the complete experiment (Data Generation → Training → Simulation → Evaluation):
+
+```sh
+# Ensure your virtual environment is active
+python -m scripts.run_experiment
 ```
 
--   **Expected Output:** You will see console messages indicating that the Prophet and LSTM models are being trained. After a few moments, it will confirm that the models have been saved to the `models/` directory.
+### Expected Output
 
-**Step 3: Launch the Entire System with Docker Compose**
+*   **Console Logs**: You will see training progress bars for Prophet and LSTM, followed by a summary table comparing the performance of all 5 scaling policies.
+*   **Plots & Reports**: Check the `reports/` directory for:
+    *   `metrics_summary.csv`: Raw performance numbers.
+    *   `*_forecast.png`: Visualization of model predictions vs. actual demand.
+    *   `*_policy_comparison.png`: Bar charts comparing cost vs. SLA violations.
 
-Now, start all the services. This command will build the necessary Docker images and start the containers in the correct order.
+---
 
-```bash
-docker-compose up --build
-```
+## Auto-Scaling Policies Implemented
 
--   **What to Expect:**
-    1.  Four services will be started: `ml_app`, `prometheus`, `grafana`, and `autoscaler`.
-    2.  Your terminal will show a combined log output from all containers.
-    3.  **To see the autoscaler in action**, watch for logs from the `autoscaler` service. You will see messages every 60 seconds like:
-        -   `Querying Prometheus for metrics...`
-        -   `Generating forecast with Prophet...`
-        -   `Policy 'confidence_aware' chose X replicas...`
-        -   `Scaling ml_app from Y to X replicas...`
-    4.  You can access the supporting services in your web browser:
-        -   **Prometheus:** `http://localhost:9090` (You can see the `ml_app` target and run queries).
-        -   **Grafana:** `http://localhost:3000` (Login with `admin`/`admin`. You can configure it to use Prometheus as a data source).
+The simulator compares five distinct strategies:
 
-To stop the system, press `Ctrl+C` in your terminal.
-
-### Option 2: Run an Offline Simulation and Evaluation
-
-If you only want to analyze and compare the performance of the different scaling policies without running the live system, use the experiment script.
-
-**Step 1: Install Dependencies and Train Models**
-
-Follow steps 1 and 2 from the "Live System" instructions above.
-
-**Step 2: Run the Experiment Script**
-
-Execute the simulation script:
-
-```bash
-python scripts/run_experiment.py
-```
-
--   **What to Expect:**
-    1.  The script will load a dataset from `data/`.
-    2.  It will run simulations for both Prophet and LSTM models against multiple scaling policies (`static`, `simple`, `buffered`, `conf`, etc.).
-    3.  The console will print out detailed performance metrics for each policy, including cost, under-provisioning events, and over-provisioning percentage.
-    4.  Check the **`reports/`** directory. It will now contain:
-        -   `metrics_summary.csv`: A CSV file with the final scores for all policies.
-        -   Multiple `.png` image files visualizing the results, such as `prophet_containers_over_time.png` and `lstm_policy_bars.png`. These plots are excellent for understanding the trade-offs between different strategies.
+*   **Static-2**: Fixed allocation (Baseline). Low complexity, high SLA violation risk.
+*   **Simple Ceiling**: Scales strictly based on forecast / capacity. Efficient but reactive.
+*   **Buffered**: Adds a safety margin (+15%) to the forecast. Balances cost and reliability.
+*   **Confidence-Aware**: Scales based on the upper bound of the forecast's confidence interval (Prophet only). Zero violations, high cost.
+*   **Policy-Aware**: Incremental scaling (add/remove 1 container at a time) to reduce system thrashing.
